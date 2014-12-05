@@ -5,29 +5,28 @@
             [compojure.core :refer :all]
             [compojure.route :as route]
             [hiccup.core :as h]
+            [mtg-info.layout.html :as layout]
             [ring.middleware.defaults :refer [wrap-defaults site-defaults]]
-            [liberator.dev]))
+            [liberator.dev]
+            [cheshire.core :as json]))
+
+(defn jsonify
+  [clj-data ]
+  {:status 200
+   :headers {"Content-Type" "application/json"}
+   :body (json/generate-string clj-data)})
 
 (defroutes app-routes
-  (GET "/" []
-       (h/html [:div
-                [:h1 "MTG Infobank"]
-                "The search interface is still in progress. In the meantime,
-                 search manually at "
-                [:a {:href "/placings"} "Placings"]
-                [:br]
-                "You can query the enties by using HTTP query syntax (?key=val).
-                 Keys are id, name, deck, event, location, finish. Vals must be
-                 url-encoded."
-                [:br]
-                "E.g. "
-                [:a {:href "/placings?name=Cedric%20Phillips"} "/placings?name=Cedric%20Phillips"]]))
+  (GET "/" [] (layout/application "MTG Infobank" layout/index-html))
+
+  (GET "/indices/placings/:field" [field :as req]
+       (jsonify (placings/index-starts-with field req)))
 
   (ANY "/placings" [] placings/placings-list)
 
   (ANY "/placings/:id" [id] (placings/placing-entry id))
 
-  (route/not-found "Not Found"))
+  (route/not-found (layout/application "Not Found" layout/not-found-html)))
 
 (def app
   (-> app-routes
