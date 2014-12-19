@@ -26,6 +26,8 @@
 
   (ANY "/placings/:id" [id] (placings/placing-entry id))
 
+  (GET "/submit" [] (layout/application "MTG Infobank" layout/submit-html))
+
   (route/not-found (layout/application "Not Found" layout/not-found-html)))
 
 (def app
