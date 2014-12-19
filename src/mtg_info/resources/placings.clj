@@ -77,11 +77,13 @@
   [ctx entries]
   (let [params (get-in ctx [:request :params])
         sort-key (or (-> params :sortby keyword) :date)
-        match-fn (get-match-fn params)]
+        match-fn (get-match-fn params)
+        maybe-reverse (if (= :date sort-key) reverse identity)]
     (->> entries
          (map second)
          (filter (partial entry-matches? params match-fn))
-         (sort-by sort-key))))
+         (sort-by sort-key)
+         (maybe-reverse))))
 
 (defn index-starts-with
   [field req]
