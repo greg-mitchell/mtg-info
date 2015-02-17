@@ -1,4 +1,5 @@
 (ns mtg-info.resources.util
+  (:import [java.net URL])
   (:require [clojure.java.io :as io]
             [hiccup.core :as h]))
 
@@ -33,3 +34,11 @@
   ([tag attr xs]
    (map (fn [x] [tag attr x]) xs)))
 
+;; a helper to create a absolute url for the entry with the given id
+(defn build-entry-url [request id & [resource-uri]]
+  (URL. (format "%s://%s:%s%s/%s"
+                (name (:scheme request))
+                (:server-name request)
+                (:server-port request)
+                (or resource-uri (:uri request))
+                (str id))))

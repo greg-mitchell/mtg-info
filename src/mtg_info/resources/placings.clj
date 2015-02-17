@@ -1,11 +1,10 @@
 (ns mtg-info.resources.placings
-  (:import (java.net URL))
   (:require [liberator.core :as liber]
             [liberator.representation :refer :all]
             [hiccup.core :as h]
-            [cheshire.core :as json]
             [mtg-info.resources.util :as util]
             [mtg-info.layout.html :as layout]
+            [mtg-info.resources.audit :as audit]
             [clojure.string :as s]))
 
 ;; we hold a entries in this ref
@@ -21,23 +20,31 @@
         num-place (Integer/parseInt place-digits)]
     (assoc l 4 num-place)))
 
+(defn- validate-placing
+  [placing]
+  (let [{:keys [name deck date location place id event format]} placing]
+    (->> {}
+      (#(if (re-matches #"[\p{Alnum} ]+" name)
+         %
+         (assoc % :name (str "Name has invalid characters: " name))))
+      (#(if (re-matches #"[\p{Alnum} ]+" deck)
+         %
+         (assoc % :deck (str "Deck name has invalid characters: " deck))))
+      (#(if (empty? %) placing {:line placing :error %})))))
+
 (defn parse-line [line]
-  (->> (s/split line #"\t")
-       cleanup-line
-       (apply ->Placing)))
+  (if-not (< (count line) 1000)
+    {:line line
+     :error "Line is too long. It must be less than 1000 characters."}
+    (let [line-fields (s/split line #"\t")]
+      (if-not (= 8 (count line-fields))
+        {:placing line-fields
+         :error   "Incorrect number of fields in line."}
+        (validate-placing (apply ->Placing (cleanup-line line-fields)))))))
 
 (defn split-and-parse-body [^String body]
   (->> (s/split-lines body)
        (map parse-line)))
-
-;; a helper to create a absolute url for the entry with the given id
-(defn build-entry-url [request id]
-  (URL. (format "%s://%s:%s%s/%s"
-                (name (:scheme request))
-                (:server-name request)
-                (:server-port request)
-                (:uri request)
-                (str id))))
 
 (defn build-placings-html
   [ctx placings-seq]
@@ -51,7 +58,7 @@
     (into [:tbody]
           (for [placing placings-seq]
             [:tr
-             [:td [:a {:href (build-entry-url (:request ctx) (:id placing))} (:id placing)]]
+             [:td [:a {:href (util/build-entry-url (:request ctx) (:id placing))} (:id placing)]]
              (util/map-tag :td
                            (map #(% placing)
                                 [:name :deck :event :location :date :place]))]))]])
@@ -109,40 +116,53 @@
   (let [link (str "http://sales.starcitygames.com/deckdatabase/displaydeck.php?DeckID=" id)]
     (h/html [:a {:href link} link])))
 
+(defn- parse-and-validate-data
+  [ctx]
+  (let [content-type (get-in ctx [:request :content-type])
+        params (get-in ctx [:request :params])]
+    (condp = content-type
+      "application/x-www-form-urlencoded"
+      [false {::data (list (validate-placing (map->Placing params)))}]
+      ;; default
+      (util/parse-body ctx ::data split-and-parse-body))))
+
 ;; create and list entries
 (liber/defresource placings-list
              :available-media-types ["text/html"]
              :allowed-methods [:get :post :put]
-             :known-content-type? #(util/check-content-type % ["text/plain"])
-             :malformed? #(util/parse-body % ::data split-and-parse-body)
-             :post! #(let [entry (first (::data %))
+             :known-content-type? #(util/check-content-type % ["text/plain" "application/x-www-form-urlencoded"])
+             :malformed? parse-and-validate-data
+             :post! #(let [data (::data %)
+                           entry (first data)
                            id (:id entry)]
                       (dosync
-                        (alter entries assoc id entry)
-                        (update-indices indices entry))
-                      {::id id})
+                        (when id
+                          (alter entries assoc id entry)
+                          (update-indices indices entry))
+                        {::audit-id (audit/create-audit data)}))
              :put! #(let [data (::data %)]
                      (dosync
                        (doseq [entry data]
                          (let [id (:id entry)]
                            (alter entries assoc id entry)
-                           (update-indices indices entry)))))
+                           (update-indices indices entry)))
+                       {::audit-id (audit/create-audit data)}))
              :post-redirect? true
-             :location #(when-let [id (get % ::id)]
-                         (build-entry-url (get % :request) id))
+             :location #(when-let [id (get % ::audit-id)]
+                         (util/build-entry-url (get % :request) id "/audits"))
              :handle-ok (fn [ctx]
                           (let [returned-entities (find-entities ctx @entries)]
                             (layout/application "Placings"
+                                                (layout/navbar "/placings")
                                                 (build-placings-html ctx returned-entities)))))
 
 (liber/defresource placing-entry [id]
              :allowed-methods [:get :put :delete]
              :known-content-type? #(util/check-content-type % ["application/json"])
-             :exists? (fn [_]
-                        (let [e (get @entries id)]
-                          (if-not (nil? e)
-                            {::entry e})))
-             :existed? (fn [_] (nil? (get @entries id ::sentinel)))
+             :exists? (fn [_ctx]
+                        (when-let [e (get @entries id)]
+                          {::entry e}))
+             :existed? (fn [_ctx] (nil? (get @entries id ::sentinel)))
              :available-media-types ["text/html" "application/json"]
              :handle-ok #(let [entry (::entry %)]
                           (assoc (into {} entry)

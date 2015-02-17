@@ -1,4 +1,7 @@
 $(function() {
+    $( "#id" ).autocomplete({
+      source: "/indices/placings/id"
+    });
     $( "#name" ).autocomplete({
       source: "/indices/placings/name"
     });
